@@ -1,0 +1,2423 @@
+{
+  "contractName": "EtherBandBattlesManager",
+  "abi": [],
+  "bytecode": "0x6080604052348015600f57600080fd5b50603580601d6000396000f3fe6080604052600080fdfea165627a7a723058203064b3dec244dd1ba84d3f07fd1ace20de60b1f87d9e21b6b1866513ea84307a0029",
+  "deployedBytecode": "0x6080604052600080fdfea165627a7a723058203064b3dec244dd1ba84d3f07fd1ace20de60b1f87d9e21b6b1866513ea84307a0029",
+  "sourceMap": "25:10659:1:-;;;;8:9:-1;5:2;;;30:1;27;20:12;5:2;25:10659:1;;;;;;;",
+  "deployedSourceMap": "25:10659:1:-;;;;;",
+  "source": "pragma solidity ^0.5.0;\n\ncontract EtherBandBattlesManager {\n\n    // ------------------ CONSTANTS     ------------------\n\n    // --->>> Video Platform IDs\n\n    // These are the IDs that tell us, which video platform the videos in\n    //  the game are source from.  (E.g. - YouTube).\n    // NOTE: These table and its equivalent in the Javascript code that\n    //  lives in the web site project MUST match (i.e. - must stay in sync)!\n\n    // We start at 1 because we want to make sure the caller specifically assigned\n    //  the video platform ID, and since 0 is the default value for a uint, that\n    //  indicates the caller forgot to set it or made some other kind of mistake.\n    enum EnumVideoPlatforms {\n        NOTSET,\n        YOUTUBE,\n        TWITTER,\n        NETFLIX,\n        VIMEO,\n        YAHOO,\n        DAILYMOTION,\n        HULU,\n        VUBE,\n        TWITCH,\n        INSTAGRAM,\n        KIK,\n        // Update this video platform ID as we add new platforms.  We use this to\n        //  check the validity of the video platform ID.\n        OUT_OF_RANGE\n    }\n\n    // --->>> Game state.\n\n    // NOTE: These table and its equivalent in the Javascript code that\n    //  lives in the web site project MUST match (i.e. - must stay in sync)!\n\tenum EnumGameState\n\t{\n\t    // Game state has not been set.  Usually indicates an error on the part of the programmer.\n\t    NOTSET,\n\t\t// The game has been created and is waiting for players, but has not\n\t\t//  been started yet.\n\t\tCREATED,\n\t\t// The game has started and is underway, and will not accept any new players.\n\t\tPLAYING,\n\t\t// The game is over.\n\t\tGAME_OVER,\n\t\t// Update this game state value as we add new states, if ever.  We use this to\n\t\t//  check the validity of a new game state assignment.\n\t\tOUT_OF_RANGE\n\t}\n\n    // --->>> Payment type.\n\n\tenum EnumPaymentType\n\t{\n\t    // The payment type has not been set.  Usually indicates an error on the part of the programmer.\n\t    NOTSET,\n\t\t// A player payment.\n\t\tPLAYER,\n\t\t// A band payment\n\t\tBAND,\n\t\t// A House payment.\n\t\tHOUSE,\n\t\t// A transfer from escrow to the the pending payments list (i.e. - the scheduling of an\n\t\t//  escrow payment.\n\t\tESCROW_TRANSFER,\n\t\t// Update this game state value as we add new states, if ever.  We use this to\n\t\t//  check the validity of a new game state assignment.\n\t\tOUT_OF_RANGE\n\t}\n\n    // This struct holds the results of one round of pla in the game.\n    struct structGameRoundResults {\n        // -------------- winner calculations & payments ------------\n\n        // We use this field to test for an element's existence, to make sure\n        //  a map key doesn't represent a deleted or non-existent element.\n        //  NOTE: This means when you create a new game struct you must\n        //  set this field to TRUE.\n        bool isExists;\n\n        // The ordinal game round number that this result belongs to.\n        uint256 roundNum;\n\n        // The ID of the video that was played during the round.\n        bytes32 videoId;\n\n        // The owner ID for the entity that owns the video.\n        bytes32 ownerId;\n\n        // The address of the player that won the round.\n        address payable winnerAddr;\n\n        // The address of the band that the video belongs to.  May be 0\n        //  if we don't have it yet.\n        address payable bandAddr;\n    }\n\n    // The struct that keeps a summary of the payments made for a game.\n    struct structGamePayments {\n        // The amount paid to the House for the game.\n        uint256 totalhousePaymentGwei;\n\n        // The amount paid out to all players in the game when it was finalized.\n        uint256 totalPlayerPayments;\n\n        // The amount paid out or stored in escrow to/for all the bands in\n        //  the game when it was finalized.\n        uint256 totalBandPaymentsOrEscrows;\n    }\n\n    // The struct that holds a particular game.\n    struct structGame {\n        // We use this field to test for an element's existence, to make sure\n        //  a map key doesn't represent a deleted or non-existent element.\n        //  NOTE: This means when you create a new game struct you must\n        //  set this field to TRUE.\n        bool isExists;\n\n        // The request nonce that was given to the make game request that\n        //  created us.\n        bytes32 requestNonce;\n\n        // Our ID.\n        uint256 id;\n\n        // The current state or phase the game is in.  See the game state\n        //  constants above.\n        EnumGameState gameState;\n\n        // The House address.\n        address payable houseAddr;\n\n        // The entry fee each player must pay to enter the game.  The sum of these\n        //  fees form the \"pool\" of funds that later will be distributed to the\n        //  bands whose videos were submitted to this game, and the participating\n        //  players.\n        uint256 entryFeeGwei;\n\n        // The percentage of the funds remaining after the House percentage is taken out\n        //  that goes directly to the bands, split evenly amongst them.  This value is\n        //  chosen by the player that created the game.\n        uint256 bandDonationPercent;\n\n        // The address of the player that created the game.\n        address payable gameCreatorAddr;\n\n        // The ID of the video the game creator submitted.\n        bytes32 gameCreatorVideoId;\n\n        // The ID of the video platform the videos in this game are source from.\n        // See the game state constants above.\n        EnumVideoPlatforms videoPlatformId;\n\n        // The number of players added to the game.\n        uint256 numPlayers;\n\n        // The game balance.  That is, the total amount of Ether contributed to\n        //  the game by all the players.\n        uint256 gameBalance;\n\n        // -------------------- GAME ACCOUNTING ---------------\n\n        structGamePayments gamePaymentsSummary;\n    } // struct structGame\n\n    // This struct groups the information necessary for a pending\n    //  payment.  A hash of the non payment amount fields are used as a to the key to\n    //  mappings involved with pending payments.  This struct is also used field within\n    //  the pending payments record.\n    struct structPendingPaymentDetails {\n        // The reference date/time assigned to us during the finalizeGame() call that\n        //  is passed to that method by the client.\n        uint256 clientReferenceTimestamp;\n\n        // The ID of the game the payment is associated with.\n        uint256 gameId;\n\n        // If the pending payments record belongs to a band, than this is the\n        //  ID of the entity that owns the video that represented the band in\n        //  game.  (e.g. - The channel ID of a YouTube video if a YouTube\n        //  video represented the band during the game.\n        // bytes32 ownerId;\n\n        // If the pending payments record belongs to a band, than this is the\n        //  ID of the video that this payment is for.\n        bytes32 videoId;\n\n        // The Ethereum address to be paid.\n        address payable payeeAddr;\n\n        // The amount of the payment.\n        uint256 paymentAmountGwei;\n\n        // The payment type.\n        EnumPaymentType paymentType;\n    } // structPendingPaymentDetails\n\n    // The struct that is one record in the linked list that tracks pending payments.\n    struct structPendingPaymentLinkRec {\n        // We use this field to test for an element's existence, to make sure\n        //  a map key doesn't represent a deleted or non-existent element.\n        //  NOTE: This means when you create a new game struct you must\n        //  set this field to TRUE.\n        bool isExists;\n\n        // The pending payment details.\n        structPendingPaymentDetails pendingPaymentDetails;\n\n        // The hash of the pending payment details payee address that will be paid BEFORE this one.\n        //  This field's payee address field (and others) will be 0 if this is the first\n        //  pending payment in the list.\n        bytes32 linkToPreviousPayee;\n        // The hash of the pending payment details payee address that will be paid AFTER this one.\n        //  This field's payee address field (and others) will be 0 if this is the first\n        //  pending payment in the list.\n        bytes32 linkToNextPayee;\n    } // structPendingPaymentLinkRec\n\n   // --->>> Game IDs.\n\n    // We do not allow a game ID to be 0.  That way we know if a game ID was\n    //  not initialized.\n    uint256 constant id_invalid = 0;\n\n    // --->>> House percentage.\n    uint256 constant pct_house = 10;\n\n    // ------------------ STORAGE VARIABLES -----------------\n\n    // This variable tracks the number of games created and also servers as a unique\n    //  ID for each game.\n    // uint256 public s_numGamesCreatedAsId;\n\n    // The map that maps a game ID to a specific game.\n    // mapping(uint256 => structGame) public s_mapGameIdToGame;\n\n    /*\n    // The map that maps a request nonce to a game ID.\n    mapping (bytes32 => uint256) public s_mapRequestNonceToGameId;\n\n    // The map that tracks individual payments tied to a particular game ID.  The\n    //  mapping key is a hash of certain fields belonging to a\n    //  structPendingPaymentDetails element.\n    mapping (bytes32 => structPendingPaymentDetails) public s_mapPendingPaymentsByGame;\n\n    // The map that tracks how much Ether is due to a particular address, whether that\n    //  address is a player or a band, for a particular game.  It allows us to quickly\n    //  report the total balance due to any particular address.\n    mapping (address => uint256) public s_mapAddressToTotalBalance;\n\n    // The map that tracks how much Ether is due to a particular owner ID.  This is the\n    //  \"escrow\" storage.\n    mapping (bytes32 => uint256) public s_mapOwnerIdToEscrowAmount;\n\n    // The game rounds for a game are stored here.\n    mapping (uint256 => structGameRoundResults[]) public s_mapGameIdToGameResults;\n\n    // The players for a game are stored here.\n    mapping (uint256 => address[]) public s_mapGameIdToPlayers;\n\n    // The total number of games ever created with this version of the contract.\n    uint256 public s_lastGameIdCreated;\n\n    // The linked list that keeps track of pending payments.  The mapping key is a\n    //  hash of a structPendingPaymentDetails element.\n    mapping (bytes32 => structPendingPaymentLinkRec) public s_mapPendingPaymentList;\n\n    // The hash of the ID Of the first pending payment in the pending payments linked list.  This element\n    //  will be 0 if there are no pending payments.\n    bytes32 s_firstPendingPaymentKey;\n\n    // The hash of the ID of the last pending payment in the pending payments linked list.  This element\n    //  will be 0 if there are no pending payments.\n    bytes32 s_lastPendingPaymentKey;\n    */\n}\n\n\n",
+  "sourcePath": "/home/robert/Documents/GitHub/ME/nested-structs-test/contracts/test-contract.sol",
+  "ast": {
+    "absolutePath": "/home/robert/Documents/GitHub/ME/nested-structs-test/contracts/test-contract.sol",
+    "exportedSymbols": {
+      "EtherBandBattlesManager": [
+        161
+      ]
+    },
+    "id": 162,
+    "nodeType": "SourceUnit",
+    "nodes": [
+      {
+        "id": 58,
+        "literals": [
+          "solidity",
+          "^",
+          "0.5",
+          ".0"
+        ],
+        "nodeType": "PragmaDirective",
+        "src": "0:23:1"
+      },
+      {
+        "baseContracts": [],
+        "contractDependencies": [],
+        "contractKind": "contract",
+        "documentation": null,
+        "fullyImplemented": true,
+        "id": 161,
+        "linearizedBaseContracts": [
+          161
+        ],
+        "name": "EtherBandBattlesManager",
+        "nodeType": "ContractDefinition",
+        "nodes": [
+          {
+            "canonicalName": "EtherBandBattlesManager.EnumVideoPlatforms",
+            "id": 72,
+            "members": [
+              {
+                "id": 59,
+                "name": "NOTSET",
+                "nodeType": "EnumValue",
+                "src": "716:6:1"
+              },
+              {
+                "id": 60,
+                "name": "YOUTUBE",
+                "nodeType": "EnumValue",
+                "src": "732:7:1"
+              },
+              {
+                "id": 61,
+                "name": "TWITTER",
+                "nodeType": "EnumValue",
+                "src": "749:7:1"
+              },
+              {
+                "id": 62,
+                "name": "NETFLIX",
+                "nodeType": "EnumValue",
+                "src": "766:7:1"
+              },
+              {
+                "id": 63,
+                "name": "VIMEO",
+                "nodeType": "EnumValue",
+                "src": "783:5:1"
+              },
+              {
+                "id": 64,
+                "name": "YAHOO",
+                "nodeType": "EnumValue",
+                "src": "798:5:1"
+              },
+              {
+                "id": 65,
+                "name": "DAILYMOTION",
+                "nodeType": "EnumValue",
+                "src": "813:11:1"
+              },
+              {
+                "id": 66,
+                "name": "HULU",
+                "nodeType": "EnumValue",
+                "src": "834:4:1"
+              },
+              {
+                "id": 67,
+                "name": "VUBE",
+                "nodeType": "EnumValue",
+                "src": "848:4:1"
+              },
+              {
+                "id": 68,
+                "name": "TWITCH",
+                "nodeType": "EnumValue",
+                "src": "862:6:1"
+              },
+              {
+                "id": 69,
+                "name": "INSTAGRAM",
+                "nodeType": "EnumValue",
+                "src": "878:9:1"
+              },
+              {
+                "id": 70,
+                "name": "KIK",
+                "nodeType": "EnumValue",
+                "src": "897:3:1"
+              },
+              {
+                "id": 71,
+                "name": "OUT_OF_RANGE",
+                "nodeType": "EnumValue",
+                "src": "1049:12:1"
+              }
+            ],
+            "name": "EnumVideoPlatforms",
+            "nodeType": "EnumDefinition",
+            "src": "682:385:1"
+          },
+          {
+            "canonicalName": "EtherBandBattlesManager.EnumGameState",
+            "id": 78,
+            "members": [
+              {
+                "id": 73,
+                "name": "NOTSET",
+                "nodeType": "EnumValue",
+                "src": "1369:6:1"
+              },
+              {
+                "id": 74,
+                "name": "CREATED",
+                "nodeType": "EnumValue",
+                "src": "1474:7:1"
+              },
+              {
+                "id": 75,
+                "name": "PLAYING",
+                "nodeType": "EnumValue",
+                "src": "1565:7:1"
+              },
+              {
+                "id": 76,
+                "name": "GAME_OVER",
+                "nodeType": "EnumValue",
+                "src": "1599:9:1"
+              },
+              {
+                "id": 77,
+                "name": "OUT_OF_RANGE",
+                "nodeType": "EnumValue",
+                "src": "1750:12:1"
+              }
+            ],
+            "name": "EnumGameState",
+            "nodeType": "EnumDefinition",
+            "src": "1246:519:1"
+          },
+          {
+            "canonicalName": "EtherBandBattlesManager.EnumPaymentType",
+            "id": 85,
+            "members": [
+              {
+                "id": 79,
+                "name": "NOTSET",
+                "nodeType": "EnumValue",
+                "src": "1928:6:1"
+              },
+              {
+                "id": 80,
+                "name": "PLAYER",
+                "nodeType": "EnumValue",
+                "src": "1961:6:1"
+              },
+              {
+                "id": 81,
+                "name": "BAND",
+                "nodeType": "EnumValue",
+                "src": "1991:4:1"
+              },
+              {
+                "id": 82,
+                "name": "HOUSE",
+                "nodeType": "EnumValue",
+                "src": "2021:5:1"
+              },
+              {
+                "id": 83,
+                "name": "ESCROW_TRANSFER",
+                "nodeType": "EnumValue",
+                "src": "2142:15:1"
+              },
+              {
+                "id": 84,
+                "name": "OUT_OF_RANGE",
+                "nodeType": "EnumValue",
+                "src": "2299:12:1"
+              }
+            ],
+            "name": "EnumPaymentType",
+            "nodeType": "EnumDefinition",
+            "src": "1797:517:1"
+          },
+          {
+            "canonicalName": "EtherBandBattlesManager.structGameRoundResults",
+            "id": 98,
+            "members": [
+              {
+                "constant": false,
+                "id": 87,
+                "name": "isExists",
+                "nodeType": "VariableDeclaration",
+                "scope": 98,
+                "src": "2762:13:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_bool",
+                  "typeString": "bool"
+                },
+                "typeName": {
+                  "id": 86,
+                  "name": "bool",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "2762:4:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_bool",
+                    "typeString": "bool"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 89,
+                "name": "roundNum",
+                "nodeType": "VariableDeclaration",
+                "scope": 98,
+                "src": "2856:16:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 88,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "2856:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 91,
+                "name": "videoId",
+                "nodeType": "VariableDeclaration",
+                "scope": 98,
+                "src": "2948:15:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_bytes32",
+                  "typeString": "bytes32"
+                },
+                "typeName": {
+                  "id": 90,
+                  "name": "bytes32",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "2948:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_bytes32",
+                    "typeString": "bytes32"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 93,
+                "name": "ownerId",
+                "nodeType": "VariableDeclaration",
+                "scope": 98,
+                "src": "3034:15:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_bytes32",
+                  "typeString": "bytes32"
+                },
+                "typeName": {
+                  "id": 92,
+                  "name": "bytes32",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "3034:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_bytes32",
+                    "typeString": "bytes32"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 95,
+                "name": "winnerAddr",
+                "nodeType": "VariableDeclaration",
+                "scope": 98,
+                "src": "3117:26:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_address_payable",
+                  "typeString": "address payable"
+                },
+                "typeName": {
+                  "id": 94,
+                  "name": "address",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "3117:15:1",
+                  "stateMutability": "payable",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_address_payable",
+                    "typeString": "address payable"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 97,
+                "name": "bandAddr",
+                "nodeType": "VariableDeclaration",
+                "scope": 98,
+                "src": "3263:24:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_address_payable",
+                  "typeString": "address payable"
+                },
+                "typeName": {
+                  "id": 96,
+                  "name": "address",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "3263:15:1",
+                  "stateMutability": "payable",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_address_payable",
+                    "typeString": "address payable"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              }
+            ],
+            "name": "structGameRoundResults",
+            "nodeType": "StructDefinition",
+            "scope": 161,
+            "src": "2390:904:1",
+            "visibility": "public"
+          },
+          {
+            "canonicalName": "EtherBandBattlesManager.structGamePayments",
+            "id": 105,
+            "members": [
+              {
+                "constant": false,
+                "id": 100,
+                "name": "totalhousePaymentGwei",
+                "nodeType": "VariableDeclaration",
+                "scope": 105,
+                "src": "3462:29:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 99,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "3462:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 102,
+                "name": "totalPlayerPayments",
+                "nodeType": "VariableDeclaration",
+                "scope": 105,
+                "src": "3583:27:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 101,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "3583:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 104,
+                "name": "totalBandPaymentsOrEscrows",
+                "nodeType": "VariableDeclaration",
+                "scope": 105,
+                "src": "3740:34:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 103,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "3740:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              }
+            ],
+            "name": "structGamePayments",
+            "nodeType": "StructDefinition",
+            "scope": 161,
+            "src": "3372:409:1",
+            "visibility": "public"
+          },
+          {
+            "canonicalName": "EtherBandBattlesManager.structGame",
+            "id": 132,
+            "members": [
+              {
+                "constant": false,
+                "id": 107,
+                "name": "isExists",
+                "nodeType": "VariableDeclaration",
+                "scope": 132,
+                "src": "4124:13:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_bool",
+                  "typeString": "bool"
+                },
+                "typeName": {
+                  "id": 106,
+                  "name": "bool",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "4124:4:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_bool",
+                    "typeString": "bool"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 109,
+                "name": "requestNonce",
+                "nodeType": "VariableDeclaration",
+                "scope": 132,
+                "src": "4246:20:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_bytes32",
+                  "typeString": "bytes32"
+                },
+                "typeName": {
+                  "id": 108,
+                  "name": "bytes32",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "4246:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_bytes32",
+                    "typeString": "bytes32"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 111,
+                "name": "id",
+                "nodeType": "VariableDeclaration",
+                "scope": 132,
+                "src": "4296:10:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 110,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "4296:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 113,
+                "name": "gameState",
+                "nodeType": "VariableDeclaration",
+                "scope": 132,
+                "src": "4420:23:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_enum$_EnumGameState_$78",
+                  "typeString": "enum EtherBandBattlesManager.EnumGameState"
+                },
+                "typeName": {
+                  "contractScope": null,
+                  "id": 112,
+                  "name": "EnumGameState",
+                  "nodeType": "UserDefinedTypeName",
+                  "referencedDeclaration": 78,
+                  "src": "4420:13:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_enum$_EnumGameState_$78",
+                    "typeString": "enum EtherBandBattlesManager.EnumGameState"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 115,
+                "name": "houseAddr",
+                "nodeType": "VariableDeclaration",
+                "scope": 132,
+                "src": "4484:25:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_address_payable",
+                  "typeString": "address payable"
+                },
+                "typeName": {
+                  "id": 114,
+                  "name": "address",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "4484:15:1",
+                  "stateMutability": "payable",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_address_payable",
+                    "typeString": "address payable"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 117,
+                "name": "entryFeeGwei",
+                "nodeType": "VariableDeclaration",
+                "scope": 132,
+                "src": "4786:20:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 116,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "4786:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 119,
+                "name": "bandDonationPercent",
+                "nodeType": "VariableDeclaration",
+                "scope": 132,
+                "src": "5049:27:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 118,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "5049:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 121,
+                "name": "gameCreatorAddr",
+                "nodeType": "VariableDeclaration",
+                "scope": 132,
+                "src": "5147:31:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_address_payable",
+                  "typeString": "address payable"
+                },
+                "typeName": {
+                  "id": 120,
+                  "name": "address",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "5147:15:1",
+                  "stateMutability": "payable",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_address_payable",
+                    "typeString": "address payable"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 123,
+                "name": "gameCreatorVideoId",
+                "nodeType": "VariableDeclaration",
+                "scope": 132,
+                "src": "5248:26:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_bytes32",
+                  "typeString": "bytes32"
+                },
+                "typeName": {
+                  "id": 122,
+                  "name": "bytes32",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "5248:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_bytes32",
+                    "typeString": "bytes32"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 125,
+                "name": "videoPlatformId",
+                "nodeType": "VariableDeclaration",
+                "scope": 132,
+                "src": "5413:34:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_enum$_EnumVideoPlatforms_$72",
+                  "typeString": "enum EtherBandBattlesManager.EnumVideoPlatforms"
+                },
+                "typeName": {
+                  "contractScope": null,
+                  "id": 124,
+                  "name": "EnumVideoPlatforms",
+                  "nodeType": "UserDefinedTypeName",
+                  "referencedDeclaration": 72,
+                  "src": "5413:18:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_enum$_EnumVideoPlatforms_$72",
+                    "typeString": "enum EtherBandBattlesManager.EnumVideoPlatforms"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 127,
+                "name": "numPlayers",
+                "nodeType": "VariableDeclaration",
+                "scope": 132,
+                "src": "5510:18:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 126,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "5510:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 129,
+                "name": "gameBalance",
+                "nodeType": "VariableDeclaration",
+                "scope": 132,
+                "src": "5660:19:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 128,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "5660:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 131,
+                "name": "gamePaymentsSummary",
+                "nodeType": "VariableDeclaration",
+                "scope": 132,
+                "src": "5755:38:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_struct$_structGamePayments_$105_storage_ptr",
+                  "typeString": "struct EtherBandBattlesManager.structGamePayments"
+                },
+                "typeName": {
+                  "contractScope": null,
+                  "id": 130,
+                  "name": "structGamePayments",
+                  "nodeType": "UserDefinedTypeName",
+                  "referencedDeclaration": 105,
+                  "src": "5755:18:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_struct$_structGamePayments_$105_storage_ptr",
+                    "typeString": "struct EtherBandBattlesManager.structGamePayments"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              }
+            ],
+            "name": "structGame",
+            "nodeType": "StructDefinition",
+            "scope": 161,
+            "src": "3835:1965:1",
+            "visibility": "public"
+          },
+          {
+            "canonicalName": "EtherBandBattlesManager.structPendingPaymentDetails",
+            "id": 145,
+            "members": [
+              {
+                "constant": false,
+                "id": 134,
+                "name": "clientReferenceTimestamp",
+                "nodeType": "VariableDeclaration",
+                "scope": 145,
+                "src": "6287:32:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 133,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "6287:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 136,
+                "name": "gameId",
+                "nodeType": "VariableDeclaration",
+                "scope": 145,
+                "src": "6392:14:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 135,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "6392:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 138,
+                "name": "videoId",
+                "nodeType": "VariableDeclaration",
+                "scope": 145,
+                "src": "6864:15:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_bytes32",
+                  "typeString": "bytes32"
+                },
+                "typeName": {
+                  "id": 137,
+                  "name": "bytes32",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "6864:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_bytes32",
+                    "typeString": "bytes32"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 140,
+                "name": "payeeAddr",
+                "nodeType": "VariableDeclaration",
+                "scope": 145,
+                "src": "6934:25:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_address_payable",
+                  "typeString": "address payable"
+                },
+                "typeName": {
+                  "id": 139,
+                  "name": "address",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "6934:15:1",
+                  "stateMutability": "payable",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_address_payable",
+                    "typeString": "address payable"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 142,
+                "name": "paymentAmountGwei",
+                "nodeType": "VariableDeclaration",
+                "scope": 145,
+                "src": "7008:25:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 141,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "7008:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 144,
+                "name": "paymentType",
+                "nodeType": "VariableDeclaration",
+                "scope": 145,
+                "src": "7073:27:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_enum$_EnumPaymentType_$85",
+                  "typeString": "enum EtherBandBattlesManager.EnumPaymentType"
+                },
+                "typeName": {
+                  "contractScope": null,
+                  "id": 143,
+                  "name": "EnumPaymentType",
+                  "nodeType": "UserDefinedTypeName",
+                  "referencedDeclaration": 85,
+                  "src": "7073:15:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_enum$_EnumPaymentType_$85",
+                    "typeString": "enum EtherBandBattlesManager.EnumPaymentType"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              }
+            ],
+            "name": "structPendingPaymentDetails",
+            "nodeType": "StructDefinition",
+            "scope": 161,
+            "src": "6104:1003:1",
+            "visibility": "public"
+          },
+          {
+            "canonicalName": "EtherBandBattlesManager.structPendingPaymentLinkRec",
+            "id": 154,
+            "members": [
+              {
+                "constant": false,
+                "id": 147,
+                "name": "isExists",
+                "nodeType": "VariableDeclaration",
+                "scope": 154,
+                "src": "7536:13:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_bool",
+                  "typeString": "bool"
+                },
+                "typeName": {
+                  "id": 146,
+                  "name": "bool",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "7536:4:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_bool",
+                    "typeString": "bool"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 149,
+                "name": "pendingPaymentDetails",
+                "nodeType": "VariableDeclaration",
+                "scope": 154,
+                "src": "7600:49:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_struct$_structPendingPaymentDetails_$145_storage_ptr",
+                  "typeString": "struct EtherBandBattlesManager.structPendingPaymentDetails"
+                },
+                "typeName": {
+                  "contractScope": null,
+                  "id": 148,
+                  "name": "structPendingPaymentDetails",
+                  "nodeType": "UserDefinedTypeName",
+                  "referencedDeclaration": 145,
+                  "src": "7600:27:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_struct$_structPendingPaymentDetails_$145_storage_ptr",
+                    "typeString": "struct EtherBandBattlesManager.structPendingPaymentDetails"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 151,
+                "name": "linkToPreviousPayee",
+                "nodeType": "VariableDeclaration",
+                "scope": 154,
+                "src": "7890:27:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_bytes32",
+                  "typeString": "bytes32"
+                },
+                "typeName": {
+                  "id": 150,
+                  "name": "bytes32",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "7890:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_bytes32",
+                    "typeString": "bytes32"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 153,
+                "name": "linkToNextPayee",
+                "nodeType": "VariableDeclaration",
+                "scope": 154,
+                "src": "8156:23:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_bytes32",
+                  "typeString": "bytes32"
+                },
+                "typeName": {
+                  "id": 152,
+                  "name": "bytes32",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "8156:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_bytes32",
+                    "typeString": "bytes32"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              }
+            ],
+            "name": "structPendingPaymentLinkRec",
+            "nodeType": "StructDefinition",
+            "scope": 161,
+            "src": "7230:956:1",
+            "visibility": "public"
+          },
+          {
+            "constant": true,
+            "id": 157,
+            "name": "id_invalid",
+            "nodeType": "VariableDeclaration",
+            "scope": 161,
+            "src": "8349:31:1",
+            "stateVariable": true,
+            "storageLocation": "default",
+            "typeDescriptions": {
+              "typeIdentifier": "t_uint256",
+              "typeString": "uint256"
+            },
+            "typeName": {
+              "id": 155,
+              "name": "uint256",
+              "nodeType": "ElementaryTypeName",
+              "src": "8349:7:1",
+              "typeDescriptions": {
+                "typeIdentifier": "t_uint256",
+                "typeString": "uint256"
+              }
+            },
+            "value": {
+              "argumentTypes": null,
+              "hexValue": "30",
+              "id": 156,
+              "isConstant": false,
+              "isLValue": false,
+              "isPure": true,
+              "kind": "number",
+              "lValueRequested": false,
+              "nodeType": "Literal",
+              "src": "8379:1:1",
+              "subdenomination": null,
+              "typeDescriptions": {
+                "typeIdentifier": "t_rational_0_by_1",
+                "typeString": "int_const 0"
+              },
+              "value": "0"
+            },
+            "visibility": "internal"
+          },
+          {
+            "constant": true,
+            "id": 160,
+            "name": "pct_house",
+            "nodeType": "VariableDeclaration",
+            "scope": 161,
+            "src": "8419:31:1",
+            "stateVariable": true,
+            "storageLocation": "default",
+            "typeDescriptions": {
+              "typeIdentifier": "t_uint256",
+              "typeString": "uint256"
+            },
+            "typeName": {
+              "id": 158,
+              "name": "uint256",
+              "nodeType": "ElementaryTypeName",
+              "src": "8419:7:1",
+              "typeDescriptions": {
+                "typeIdentifier": "t_uint256",
+                "typeString": "uint256"
+              }
+            },
+            "value": {
+              "argumentTypes": null,
+              "hexValue": "3130",
+              "id": 159,
+              "isConstant": false,
+              "isLValue": false,
+              "isPure": true,
+              "kind": "number",
+              "lValueRequested": false,
+              "nodeType": "Literal",
+              "src": "8448:2:1",
+              "subdenomination": null,
+              "typeDescriptions": {
+                "typeIdentifier": "t_rational_10_by_1",
+                "typeString": "int_const 10"
+              },
+              "value": "10"
+            },
+            "visibility": "internal"
+          }
+        ],
+        "scope": 162,
+        "src": "25:10659:1"
+      }
+    ],
+    "src": "0:10687:1"
+  },
+  "legacyAST": {
+    "absolutePath": "/home/robert/Documents/GitHub/ME/nested-structs-test/contracts/test-contract.sol",
+    "exportedSymbols": {
+      "EtherBandBattlesManager": [
+        161
+      ]
+    },
+    "id": 162,
+    "nodeType": "SourceUnit",
+    "nodes": [
+      {
+        "id": 58,
+        "literals": [
+          "solidity",
+          "^",
+          "0.5",
+          ".0"
+        ],
+        "nodeType": "PragmaDirective",
+        "src": "0:23:1"
+      },
+      {
+        "baseContracts": [],
+        "contractDependencies": [],
+        "contractKind": "contract",
+        "documentation": null,
+        "fullyImplemented": true,
+        "id": 161,
+        "linearizedBaseContracts": [
+          161
+        ],
+        "name": "EtherBandBattlesManager",
+        "nodeType": "ContractDefinition",
+        "nodes": [
+          {
+            "canonicalName": "EtherBandBattlesManager.EnumVideoPlatforms",
+            "id": 72,
+            "members": [
+              {
+                "id": 59,
+                "name": "NOTSET",
+                "nodeType": "EnumValue",
+                "src": "716:6:1"
+              },
+              {
+                "id": 60,
+                "name": "YOUTUBE",
+                "nodeType": "EnumValue",
+                "src": "732:7:1"
+              },
+              {
+                "id": 61,
+                "name": "TWITTER",
+                "nodeType": "EnumValue",
+                "src": "749:7:1"
+              },
+              {
+                "id": 62,
+                "name": "NETFLIX",
+                "nodeType": "EnumValue",
+                "src": "766:7:1"
+              },
+              {
+                "id": 63,
+                "name": "VIMEO",
+                "nodeType": "EnumValue",
+                "src": "783:5:1"
+              },
+              {
+                "id": 64,
+                "name": "YAHOO",
+                "nodeType": "EnumValue",
+                "src": "798:5:1"
+              },
+              {
+                "id": 65,
+                "name": "DAILYMOTION",
+                "nodeType": "EnumValue",
+                "src": "813:11:1"
+              },
+              {
+                "id": 66,
+                "name": "HULU",
+                "nodeType": "EnumValue",
+                "src": "834:4:1"
+              },
+              {
+                "id": 67,
+                "name": "VUBE",
+                "nodeType": "EnumValue",
+                "src": "848:4:1"
+              },
+              {
+                "id": 68,
+                "name": "TWITCH",
+                "nodeType": "EnumValue",
+                "src": "862:6:1"
+              },
+              {
+                "id": 69,
+                "name": "INSTAGRAM",
+                "nodeType": "EnumValue",
+                "src": "878:9:1"
+              },
+              {
+                "id": 70,
+                "name": "KIK",
+                "nodeType": "EnumValue",
+                "src": "897:3:1"
+              },
+              {
+                "id": 71,
+                "name": "OUT_OF_RANGE",
+                "nodeType": "EnumValue",
+                "src": "1049:12:1"
+              }
+            ],
+            "name": "EnumVideoPlatforms",
+            "nodeType": "EnumDefinition",
+            "src": "682:385:1"
+          },
+          {
+            "canonicalName": "EtherBandBattlesManager.EnumGameState",
+            "id": 78,
+            "members": [
+              {
+                "id": 73,
+                "name": "NOTSET",
+                "nodeType": "EnumValue",
+                "src": "1369:6:1"
+              },
+              {
+                "id": 74,
+                "name": "CREATED",
+                "nodeType": "EnumValue",
+                "src": "1474:7:1"
+              },
+              {
+                "id": 75,
+                "name": "PLAYING",
+                "nodeType": "EnumValue",
+                "src": "1565:7:1"
+              },
+              {
+                "id": 76,
+                "name": "GAME_OVER",
+                "nodeType": "EnumValue",
+                "src": "1599:9:1"
+              },
+              {
+                "id": 77,
+                "name": "OUT_OF_RANGE",
+                "nodeType": "EnumValue",
+                "src": "1750:12:1"
+              }
+            ],
+            "name": "EnumGameState",
+            "nodeType": "EnumDefinition",
+            "src": "1246:519:1"
+          },
+          {
+            "canonicalName": "EtherBandBattlesManager.EnumPaymentType",
+            "id": 85,
+            "members": [
+              {
+                "id": 79,
+                "name": "NOTSET",
+                "nodeType": "EnumValue",
+                "src": "1928:6:1"
+              },
+              {
+                "id": 80,
+                "name": "PLAYER",
+                "nodeType": "EnumValue",
+                "src": "1961:6:1"
+              },
+              {
+                "id": 81,
+                "name": "BAND",
+                "nodeType": "EnumValue",
+                "src": "1991:4:1"
+              },
+              {
+                "id": 82,
+                "name": "HOUSE",
+                "nodeType": "EnumValue",
+                "src": "2021:5:1"
+              },
+              {
+                "id": 83,
+                "name": "ESCROW_TRANSFER",
+                "nodeType": "EnumValue",
+                "src": "2142:15:1"
+              },
+              {
+                "id": 84,
+                "name": "OUT_OF_RANGE",
+                "nodeType": "EnumValue",
+                "src": "2299:12:1"
+              }
+            ],
+            "name": "EnumPaymentType",
+            "nodeType": "EnumDefinition",
+            "src": "1797:517:1"
+          },
+          {
+            "canonicalName": "EtherBandBattlesManager.structGameRoundResults",
+            "id": 98,
+            "members": [
+              {
+                "constant": false,
+                "id": 87,
+                "name": "isExists",
+                "nodeType": "VariableDeclaration",
+                "scope": 98,
+                "src": "2762:13:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_bool",
+                  "typeString": "bool"
+                },
+                "typeName": {
+                  "id": 86,
+                  "name": "bool",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "2762:4:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_bool",
+                    "typeString": "bool"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 89,
+                "name": "roundNum",
+                "nodeType": "VariableDeclaration",
+                "scope": 98,
+                "src": "2856:16:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 88,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "2856:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 91,
+                "name": "videoId",
+                "nodeType": "VariableDeclaration",
+                "scope": 98,
+                "src": "2948:15:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_bytes32",
+                  "typeString": "bytes32"
+                },
+                "typeName": {
+                  "id": 90,
+                  "name": "bytes32",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "2948:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_bytes32",
+                    "typeString": "bytes32"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 93,
+                "name": "ownerId",
+                "nodeType": "VariableDeclaration",
+                "scope": 98,
+                "src": "3034:15:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_bytes32",
+                  "typeString": "bytes32"
+                },
+                "typeName": {
+                  "id": 92,
+                  "name": "bytes32",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "3034:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_bytes32",
+                    "typeString": "bytes32"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 95,
+                "name": "winnerAddr",
+                "nodeType": "VariableDeclaration",
+                "scope": 98,
+                "src": "3117:26:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_address_payable",
+                  "typeString": "address payable"
+                },
+                "typeName": {
+                  "id": 94,
+                  "name": "address",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "3117:15:1",
+                  "stateMutability": "payable",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_address_payable",
+                    "typeString": "address payable"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 97,
+                "name": "bandAddr",
+                "nodeType": "VariableDeclaration",
+                "scope": 98,
+                "src": "3263:24:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_address_payable",
+                  "typeString": "address payable"
+                },
+                "typeName": {
+                  "id": 96,
+                  "name": "address",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "3263:15:1",
+                  "stateMutability": "payable",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_address_payable",
+                    "typeString": "address payable"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              }
+            ],
+            "name": "structGameRoundResults",
+            "nodeType": "StructDefinition",
+            "scope": 161,
+            "src": "2390:904:1",
+            "visibility": "public"
+          },
+          {
+            "canonicalName": "EtherBandBattlesManager.structGamePayments",
+            "id": 105,
+            "members": [
+              {
+                "constant": false,
+                "id": 100,
+                "name": "totalhousePaymentGwei",
+                "nodeType": "VariableDeclaration",
+                "scope": 105,
+                "src": "3462:29:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 99,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "3462:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 102,
+                "name": "totalPlayerPayments",
+                "nodeType": "VariableDeclaration",
+                "scope": 105,
+                "src": "3583:27:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 101,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "3583:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 104,
+                "name": "totalBandPaymentsOrEscrows",
+                "nodeType": "VariableDeclaration",
+                "scope": 105,
+                "src": "3740:34:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 103,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "3740:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              }
+            ],
+            "name": "structGamePayments",
+            "nodeType": "StructDefinition",
+            "scope": 161,
+            "src": "3372:409:1",
+            "visibility": "public"
+          },
+          {
+            "canonicalName": "EtherBandBattlesManager.structGame",
+            "id": 132,
+            "members": [
+              {
+                "constant": false,
+                "id": 107,
+                "name": "isExists",
+                "nodeType": "VariableDeclaration",
+                "scope": 132,
+                "src": "4124:13:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_bool",
+                  "typeString": "bool"
+                },
+                "typeName": {
+                  "id": 106,
+                  "name": "bool",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "4124:4:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_bool",
+                    "typeString": "bool"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 109,
+                "name": "requestNonce",
+                "nodeType": "VariableDeclaration",
+                "scope": 132,
+                "src": "4246:20:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_bytes32",
+                  "typeString": "bytes32"
+                },
+                "typeName": {
+                  "id": 108,
+                  "name": "bytes32",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "4246:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_bytes32",
+                    "typeString": "bytes32"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 111,
+                "name": "id",
+                "nodeType": "VariableDeclaration",
+                "scope": 132,
+                "src": "4296:10:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 110,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "4296:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 113,
+                "name": "gameState",
+                "nodeType": "VariableDeclaration",
+                "scope": 132,
+                "src": "4420:23:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_enum$_EnumGameState_$78",
+                  "typeString": "enum EtherBandBattlesManager.EnumGameState"
+                },
+                "typeName": {
+                  "contractScope": null,
+                  "id": 112,
+                  "name": "EnumGameState",
+                  "nodeType": "UserDefinedTypeName",
+                  "referencedDeclaration": 78,
+                  "src": "4420:13:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_enum$_EnumGameState_$78",
+                    "typeString": "enum EtherBandBattlesManager.EnumGameState"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 115,
+                "name": "houseAddr",
+                "nodeType": "VariableDeclaration",
+                "scope": 132,
+                "src": "4484:25:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_address_payable",
+                  "typeString": "address payable"
+                },
+                "typeName": {
+                  "id": 114,
+                  "name": "address",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "4484:15:1",
+                  "stateMutability": "payable",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_address_payable",
+                    "typeString": "address payable"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 117,
+                "name": "entryFeeGwei",
+                "nodeType": "VariableDeclaration",
+                "scope": 132,
+                "src": "4786:20:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 116,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "4786:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 119,
+                "name": "bandDonationPercent",
+                "nodeType": "VariableDeclaration",
+                "scope": 132,
+                "src": "5049:27:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 118,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "5049:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 121,
+                "name": "gameCreatorAddr",
+                "nodeType": "VariableDeclaration",
+                "scope": 132,
+                "src": "5147:31:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_address_payable",
+                  "typeString": "address payable"
+                },
+                "typeName": {
+                  "id": 120,
+                  "name": "address",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "5147:15:1",
+                  "stateMutability": "payable",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_address_payable",
+                    "typeString": "address payable"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 123,
+                "name": "gameCreatorVideoId",
+                "nodeType": "VariableDeclaration",
+                "scope": 132,
+                "src": "5248:26:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_bytes32",
+                  "typeString": "bytes32"
+                },
+                "typeName": {
+                  "id": 122,
+                  "name": "bytes32",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "5248:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_bytes32",
+                    "typeString": "bytes32"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 125,
+                "name": "videoPlatformId",
+                "nodeType": "VariableDeclaration",
+                "scope": 132,
+                "src": "5413:34:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_enum$_EnumVideoPlatforms_$72",
+                  "typeString": "enum EtherBandBattlesManager.EnumVideoPlatforms"
+                },
+                "typeName": {
+                  "contractScope": null,
+                  "id": 124,
+                  "name": "EnumVideoPlatforms",
+                  "nodeType": "UserDefinedTypeName",
+                  "referencedDeclaration": 72,
+                  "src": "5413:18:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_enum$_EnumVideoPlatforms_$72",
+                    "typeString": "enum EtherBandBattlesManager.EnumVideoPlatforms"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 127,
+                "name": "numPlayers",
+                "nodeType": "VariableDeclaration",
+                "scope": 132,
+                "src": "5510:18:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 126,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "5510:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 129,
+                "name": "gameBalance",
+                "nodeType": "VariableDeclaration",
+                "scope": 132,
+                "src": "5660:19:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 128,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "5660:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 131,
+                "name": "gamePaymentsSummary",
+                "nodeType": "VariableDeclaration",
+                "scope": 132,
+                "src": "5755:38:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_struct$_structGamePayments_$105_storage_ptr",
+                  "typeString": "struct EtherBandBattlesManager.structGamePayments"
+                },
+                "typeName": {
+                  "contractScope": null,
+                  "id": 130,
+                  "name": "structGamePayments",
+                  "nodeType": "UserDefinedTypeName",
+                  "referencedDeclaration": 105,
+                  "src": "5755:18:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_struct$_structGamePayments_$105_storage_ptr",
+                    "typeString": "struct EtherBandBattlesManager.structGamePayments"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              }
+            ],
+            "name": "structGame",
+            "nodeType": "StructDefinition",
+            "scope": 161,
+            "src": "3835:1965:1",
+            "visibility": "public"
+          },
+          {
+            "canonicalName": "EtherBandBattlesManager.structPendingPaymentDetails",
+            "id": 145,
+            "members": [
+              {
+                "constant": false,
+                "id": 134,
+                "name": "clientReferenceTimestamp",
+                "nodeType": "VariableDeclaration",
+                "scope": 145,
+                "src": "6287:32:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 133,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "6287:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 136,
+                "name": "gameId",
+                "nodeType": "VariableDeclaration",
+                "scope": 145,
+                "src": "6392:14:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 135,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "6392:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 138,
+                "name": "videoId",
+                "nodeType": "VariableDeclaration",
+                "scope": 145,
+                "src": "6864:15:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_bytes32",
+                  "typeString": "bytes32"
+                },
+                "typeName": {
+                  "id": 137,
+                  "name": "bytes32",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "6864:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_bytes32",
+                    "typeString": "bytes32"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 140,
+                "name": "payeeAddr",
+                "nodeType": "VariableDeclaration",
+                "scope": 145,
+                "src": "6934:25:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_address_payable",
+                  "typeString": "address payable"
+                },
+                "typeName": {
+                  "id": 139,
+                  "name": "address",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "6934:15:1",
+                  "stateMutability": "payable",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_address_payable",
+                    "typeString": "address payable"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 142,
+                "name": "paymentAmountGwei",
+                "nodeType": "VariableDeclaration",
+                "scope": 145,
+                "src": "7008:25:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 141,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "7008:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 144,
+                "name": "paymentType",
+                "nodeType": "VariableDeclaration",
+                "scope": 145,
+                "src": "7073:27:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_enum$_EnumPaymentType_$85",
+                  "typeString": "enum EtherBandBattlesManager.EnumPaymentType"
+                },
+                "typeName": {
+                  "contractScope": null,
+                  "id": 143,
+                  "name": "EnumPaymentType",
+                  "nodeType": "UserDefinedTypeName",
+                  "referencedDeclaration": 85,
+                  "src": "7073:15:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_enum$_EnumPaymentType_$85",
+                    "typeString": "enum EtherBandBattlesManager.EnumPaymentType"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              }
+            ],
+            "name": "structPendingPaymentDetails",
+            "nodeType": "StructDefinition",
+            "scope": 161,
+            "src": "6104:1003:1",
+            "visibility": "public"
+          },
+          {
+            "canonicalName": "EtherBandBattlesManager.structPendingPaymentLinkRec",
+            "id": 154,
+            "members": [
+              {
+                "constant": false,
+                "id": 147,
+                "name": "isExists",
+                "nodeType": "VariableDeclaration",
+                "scope": 154,
+                "src": "7536:13:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_bool",
+                  "typeString": "bool"
+                },
+                "typeName": {
+                  "id": 146,
+                  "name": "bool",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "7536:4:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_bool",
+                    "typeString": "bool"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 149,
+                "name": "pendingPaymentDetails",
+                "nodeType": "VariableDeclaration",
+                "scope": 154,
+                "src": "7600:49:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_struct$_structPendingPaymentDetails_$145_storage_ptr",
+                  "typeString": "struct EtherBandBattlesManager.structPendingPaymentDetails"
+                },
+                "typeName": {
+                  "contractScope": null,
+                  "id": 148,
+                  "name": "structPendingPaymentDetails",
+                  "nodeType": "UserDefinedTypeName",
+                  "referencedDeclaration": 145,
+                  "src": "7600:27:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_struct$_structPendingPaymentDetails_$145_storage_ptr",
+                    "typeString": "struct EtherBandBattlesManager.structPendingPaymentDetails"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 151,
+                "name": "linkToPreviousPayee",
+                "nodeType": "VariableDeclaration",
+                "scope": 154,
+                "src": "7890:27:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_bytes32",
+                  "typeString": "bytes32"
+                },
+                "typeName": {
+                  "id": 150,
+                  "name": "bytes32",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "7890:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_bytes32",
+                    "typeString": "bytes32"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 153,
+                "name": "linkToNextPayee",
+                "nodeType": "VariableDeclaration",
+                "scope": 154,
+                "src": "8156:23:1",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_bytes32",
+                  "typeString": "bytes32"
+                },
+                "typeName": {
+                  "id": 152,
+                  "name": "bytes32",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "8156:7:1",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_bytes32",
+                    "typeString": "bytes32"
+                  }
+                },
+                "value": null,
+                "visibility": "internal"
+              }
+            ],
+            "name": "structPendingPaymentLinkRec",
+            "nodeType": "StructDefinition",
+            "scope": 161,
+            "src": "7230:956:1",
+            "visibility": "public"
+          },
+          {
+            "constant": true,
+            "id": 157,
+            "name": "id_invalid",
+            "nodeType": "VariableDeclaration",
+            "scope": 161,
+            "src": "8349:31:1",
+            "stateVariable": true,
+            "storageLocation": "default",
+            "typeDescriptions": {
+              "typeIdentifier": "t_uint256",
+              "typeString": "uint256"
+            },
+            "typeName": {
+              "id": 155,
+              "name": "uint256",
+              "nodeType": "ElementaryTypeName",
+              "src": "8349:7:1",
+              "typeDescriptions": {
+                "typeIdentifier": "t_uint256",
+                "typeString": "uint256"
+              }
+            },
+            "value": {
+              "argumentTypes": null,
+              "hexValue": "30",
+              "id": 156,
+              "isConstant": false,
+              "isLValue": false,
+              "isPure": true,
+              "kind": "number",
+              "lValueRequested": false,
+              "nodeType": "Literal",
+              "src": "8379:1:1",
+              "subdenomination": null,
+              "typeDescriptions": {
+                "typeIdentifier": "t_rational_0_by_1",
+                "typeString": "int_const 0"
+              },
+              "value": "0"
+            },
+            "visibility": "internal"
+          },
+          {
+            "constant": true,
+            "id": 160,
+            "name": "pct_house",
+            "nodeType": "VariableDeclaration",
+            "scope": 161,
+            "src": "8419:31:1",
+            "stateVariable": true,
+            "storageLocation": "default",
+            "typeDescriptions": {
+              "typeIdentifier": "t_uint256",
+              "typeString": "uint256"
+            },
+            "typeName": {
+              "id": 158,
+              "name": "uint256",
+              "nodeType": "ElementaryTypeName",
+              "src": "8419:7:1",
+              "typeDescriptions": {
+                "typeIdentifier": "t_uint256",
+                "typeString": "uint256"
+              }
+            },
+            "value": {
+              "argumentTypes": null,
+              "hexValue": "3130",
+              "id": 159,
+              "isConstant": false,
+              "isLValue": false,
+              "isPure": true,
+              "kind": "number",
+              "lValueRequested": false,
+              "nodeType": "Literal",
+              "src": "8448:2:1",
+              "subdenomination": null,
+              "typeDescriptions": {
+                "typeIdentifier": "t_rational_10_by_1",
+                "typeString": "int_const 10"
+              },
+              "value": "10"
+            },
+            "visibility": "internal"
+          }
+        ],
+        "scope": 162,
+        "src": "25:10659:1"
+      }
+    ],
+    "src": "0:10687:1"
+  },
+  "compiler": {
+    "name": "solc",
+    "version": "0.5.0+commit.1d4f565a.Emscripten.clang"
+  },
+  "networks": {},
+  "schemaVersion": "3.0.0-beta.2",
+  "updatedAt": "2018-11-27T17:02:48.286Z",
+  "devdoc": {
+    "methods": {}
+  },
+  "userdoc": {
+    "methods": {}
+  }
+}
